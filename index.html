@@ -15,6 +15,28 @@
 <title>CargaFuego Pro v1</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script>
+// Carga diferida de librerías PDF — no bloquea la app si fallan
+window._pdfLibsReady = false;
+function _cargarLibsPDF(){
+  return new Promise((resolve)=>{
+    if(window._pdfLibsReady){ resolve(true); return; }
+    // Cargar html2canvas
+    const s1 = document.createElement('script');
+    s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s1.onload = ()=>{
+      // Cargar jsPDF después de html2canvas
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+      s2.onload = ()=>{ window._pdfLibsReady = true; resolve(true); };
+      s2.onerror = ()=>{ resolve(false); };
+      document.head.appendChild(s2);
+    };
+    s1.onerror = ()=>{ resolve(false); };
+    document.head.appendChild(s1);
+  });
+}
+</script>
+<script>
 // ── PWA: Inyectar manifest dinámicamente (no requiere archivo externo) ──
 (function(){
   const icon='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="100" fill="%230d2137"/><text y="320" x="256" font-size="320" text-anchor="middle">🔥</text><rect x="0" y="430" width="512" height="82" fill="%23b8843a" rx="0"/><text y="495" x="256" font-size="52" text-anchor="middle" fill="white" font-family="serif" font-weight="bold">CargaFuego Pro</text></svg>';
@@ -1865,7 +1887,7 @@ function renderHist(){
           ${tieneHTML?'&#128065; Ver informe':'&#9888; Sin datos'}
         </button>
         <button onclick="exportarInformeHist(${i})" style="padding:10px 6px;font-size:11px;font-weight:700;color:var(--te);background:rgba(20,92,66,.07);border:none;border-right:1px solid var(--bd);cursor:pointer;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;gap:4px">
-          &#8679; Exportar
+          &#8679; Exportar PDF
         </button>
         <button onclick="delHist(${i})" style="padding:10px 6px;font-size:11px;font-weight:700;color:var(--re);background:rgba(139,30,30,.06);border:none;cursor:pointer;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;gap:4px">
           &#128465; Borrar
@@ -1902,97 +1924,147 @@ function exportarInforme(){
   else _doExport(null);
 }
 
-// Exportar informe desde historial
-function exportarInformeHist(i){
+// Exportar informe desde historial — abre modal y exporta
+async function exportarInformeHist(i){
   const h=JSON.parse(localStorage.getItem('hist')||'[]')[i];
-  if(!h)return;
+  if(!h){ notif('Sin datos para exportar'); return; }
+  // Si el informe tiene HTML guardado, abrirlo en modal primero
+  if(h.html && h.html.length > 100){
+    verInformeHist(i);
+    await new Promise(r => setTimeout(r, 600)); // esperar que renderice
+  } else {
+    notif('Este informe no tiene contenido visual. Regeneralo desde el calculo.');
+    return;
+  }
   _doExport(h);
 }
 
 // Motor de exportacion: genera texto rico del informe y lo comparte
-function _doExport(h){
-  // Si se llama desde el informe activo en pantalla, construir resumen desde CALC
-  const src=h||{
-    empresa: (CALC.emp||{}).nombre||'—', rut:(CALC.emp||{}).rut||'—',
-    fecha:(CALC.emp||{}).fecha||'—', tipo:(CALC.emp||{}).tipo||'—',
-    m2:(CALC.emp||{}).m2||'—', dcMJ:(CALC.dcMJ||0).toFixed(2),
-    dcKcal:(CALC.dcKcal||0).toFixed(0), cl:(CALC.cl||{}).cl||'—',
-    riesgo:(CALC.cl||{}).riesgo||'—', rf:(CALC.cl||{}).rf||'—',
-    totalExt:EXT.totalExt||0, prof:'', ts:Date.now(),
+// ─────────────────────────────────────────────────────────
+//  EXPORTAR INFORME COMO PDF (html2canvas → jsPDF)
+//  Captura el informe visualmente → lo convierte a PDF
+//  con el mismo diseño de la app → lo comparte via iOS
+// ─────────────────────────────────────────────────────────
+async function _doExport(h){
+  const src = h || {
+    empresa: (CALC.emp||{}).nombre||'Informe',
+    fecha: (CALC.emp||{}).fecha || new Date().toISOString().split('T')[0],
   };
-  const perf=JSON.parse(localStorage.getItem('perfil')||'{}');
-  const nomExp=src.prof||((perf.nom||'')+' '+(perf.ape||'')).trim()||'No especificado';
-  const fecha=new Date(src.ts).toLocaleDateString('es-CL',{year:'numeric',month:'long',day:'numeric'});
+  const fname = 'InformeCC_' + (src.empresa||'empresa').replace(/\s+/g,'_') + '_' + src.fecha + '.pdf';
 
-  const txt=[
-    '================================================',
-    '   INFORME TECNICO DE CARGA DE COMBUSTIBLE',
-    '   CargaFuego Pro v1.0',
-    '================================================',
-    '',
-    '1. IDENTIFICACION DEL INFORME',
-    '--------------------------------',
-    'Empresa / Razon Social : '+src.empresa,
-    'RUT                    : '+src.rut,
-    'Fecha del informe      : '+src.fecha,
-    'Tipo de establecimiento: '+src.tipo,
-    'Superficie evaluada    : '+src.m2+' m2',
-    '',
-    '2. RESULTADO DEL CALCULO',
-    '--------------------------------',
-    'Densidad carga comb.   : '+src.dcMJ+' MJ/m2',
-    'Equivalente kcal/m2    : '+src.dcKcal+' kcal/m2',
-    '',
-    '3. CLASIFICACION NCh 1993 Of.1998',
-    '--------------------------------',
-    'Clase                  : '+src.cl,
-    'Nivel de riesgo        : '+src.riesgo,
-    'RF requerida (OGUC)    : '+src.rf,
-    '',
-    '4. EXTINTORES (DS 594 Art. 46)',
-    '--------------------------------',
-    'N extintores requeridos: '+src.totalExt,
-    EXT.potLabel?'Potencial extintor     : '+EXT.potLabel:'',
-    EXT.areaCob?'Area de cobertura      : '+EXT.areaCob+' m2/extintor':'',
-    '',
-    '5. ELABORADO POR',
-    '--------------------------------',
-    'Profesional responsable: '+nomExp,
-    perf.tit?'Titulo               : '+perf.tit:'',
-    perf.reg?'N Registro           : '+perf.reg:'',
-    perf.emp?'Empresa consultora   : '+perf.emp:'',
-    perf.mail?'Correo               : '+perf.mail:'',
-    perf.tel?'Telefono             : '+perf.tel:'',
-    '',
-    '================================================',
-    'Emitido el '+fecha,
-    'Generado con CargaFuego Pro v1.0',
-    'Normativa: NCh1916 / NCh1993 / OGUC Art.4.3.3 / DS594 Art.46',
-    '================================================',
-  ].filter(l=>l!==undefined&&l!==null).join('\n');
+  const btnLbl = el('export-lbl');
+  const btn    = el('btn-export-modal');
+  if(btnLbl) btnLbl.textContent = 'Cargando...';
+  if(btn){ btn.style.opacity='0.6'; btn.disabled=true; }
+  notif('Preparando exportacion PDF...');
 
-  const titulo='Informe CC - '+src.empresa+' ('+src.fecha+')';
+  try {
+    // Cargar librerías bajo demanda
+    const libsOk = await _cargarLibsPDF();
+    if(!libsOk || !window.html2canvas || !window.jspdf){
+      throw new Error('No se pudieron cargar las librerias. Verifica internet.');
+    }
+    if(btnLbl) btnLbl.textContent = 'Generando...';
 
-  if(navigator.share){
-    navigator.share({title:titulo, text:txt})
-      .catch(()=>{ _copyFallback(txt); });
-  } else {
-    _copyFallback(txt);
+    const target = el('inf-modal-content');
+    if(!target) throw new Error('No hay informe abierto');
+    target.scrollTop = 0;
+    await new Promise(r => setTimeout(r, 400));
+
+    // Capturar con html2canvas
+    const canvas = await html2canvas(target, {
+      scale: 2, useCORS: true, allowTaint: true,
+      backgroundColor: '#f0ede6', logging: false, windowWidth: 390,
+    });
+
+    // Crear PDF
+    const { jsPDF } = window.jspdf;
+    const pdfW = 210, pageH = 297;
+    const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+    const pageImgPx = Math.floor((pageH * canvas.width) / pdfW);
+    let yPx = 0, page = 0;
+    while(yPx < canvas.height){
+      if(page > 0) doc.addPage();
+      const sliceH = Math.min(pageImgPx, canvas.height - yPx);
+      const pc = document.createElement('canvas');
+      pc.width = canvas.width; pc.height = sliceH;
+      pc.getContext('2d').drawImage(canvas, 0, -yPx);
+      const sliceMM = (sliceH * pdfW) / canvas.width;
+      doc.addImage(pc.toDataURL('image/jpeg', 0.90), 'JPEG', 0, 0, pdfW, sliceMM);
+      yPx += pageImgPx; page++;
+    }
+
+    // Compartir o abrir
+    const pdfBlob = doc.output('blob');
+    const pdfFile = new File([pdfBlob], fname, { type:'application/pdf' });
+    if(navigator.share && navigator.canShare && navigator.canShare({ files:[pdfFile] })){
+      await navigator.share({ title:'Informe CC — '+src.empresa, files:[pdfFile] });
+      notif('PDF compartido exitosamente');
+    } else {
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href=url; a.target='_blank'; a.rel='noopener'; a.download=fname;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=> _mostrarInstruccionCompartir(), 800);
+    }
+  } catch(err){
+    console.error('Export:', err);
+    notif('Error: ' + (err.message||'No se pudo exportar'));
+  } finally {
+    if(btnLbl) btnLbl.textContent = 'Exportar PDF';
+    if(btn){ btn.style.opacity='1'; btn.disabled=false; }
   }
 }
 
-function _copyFallback(txt){
-  if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(txt).then(()=>notif('Informe copiado — pegalo en Notes, Mail o WhatsApp'));
-  } else {
-    const ta=document.createElement('textarea');
-    ta.value=txt;ta.style.position='fixed';ta.style.opacity='0';
-    document.body.appendChild(ta);ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    notif('Informe copiado al portapapeles');
-  }
+function _mostrarInstruccionCompartir(){
+  // Crear panel de instrucción temporal sobre el modal
+  const panel = document.createElement('div');
+  panel.style.cssText = `
+    position:fixed;bottom:100px;left:16px;right:16px;
+    background:#1a6446;color:#fff;border-radius:14px;
+    padding:14px 16px;font-family:'DM Sans',sans-serif;
+    font-size:13px;font-weight:500;line-height:1.6;
+    box-shadow:0 8px 32px rgba(0,0,0,.3);z-index:9999;
+    display:flex;align-items:flex-start;gap:10px;
+  `;
+  panel.innerHTML = `
+    <span style="font-size:20px;flex-shrink:0">📄</span>
+    <div>
+      <strong>PDF generado correctamente</strong><br>
+      Se abrió en Safari. Toca el botón
+      <strong>Compartir ⬆️</strong> para enviarlo por
+      Mail, WhatsApp, AirDrop o guardarlo en Archivos.
+    </div>
+  `;
+  document.body.appendChild(panel);
+  // Animación entrada
+  panel.style.transform = 'translateY(20px)';
+  panel.style.opacity = '0';
+  panel.style.transition = 'all .35s cubic-bezier(.34,1.36,.64,1)';
+  setTimeout(()=>{ panel.style.transform='translateY(0)'; panel.style.opacity='1'; }, 50);
+  // Remover después de 7 segundos
+  setTimeout(()=>{
+    panel.style.opacity='0'; panel.style.transform='translateY(10px)';
+    setTimeout(()=>{ if(panel.parentNode) panel.parentNode.removeChild(panel); }, 400);
+  }, 7000);
+  // Toca para cerrar
+  panel.addEventListener('click', ()=>{
+    panel.style.opacity='0';
+    setTimeout(()=>{ if(panel.parentNode) panel.parentNode.removeChild(panel); }, 300);
+  });
 }
+
+function _descargarBlob(blob, fname){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 2000);
+  notif('PDF descargado: ' + fname);
+}
+
+
 
 function nuevoCalc(){
   if(!confirm('¿Iniciar un nuevo cálculo? Los datos no guardados se perderán.'))return;
@@ -2048,8 +2120,8 @@ window.addEventListener('DOMContentLoaded',()=>{
   <div class="inf-modal-bar">
     <button class="inf-modal-back" onclick="cerrarModal()">&#8592;</button>
     <div class="inf-modal-title" id="inf-modal-title">Informe Tecnico</div>
-    <button class="inf-modal-export" onclick="exportarInforme()">
-      <span>&#8679;</span> Exportar
+    <button class="inf-modal-export" id="btn-export-modal" onclick="exportarInforme()">
+      <span>&#8679;</span> <span id="export-lbl">Exportar PDF</span>
     </button>
   </div>
   <div class="inf-modal-scroll" id="inf-modal-content"></div>
