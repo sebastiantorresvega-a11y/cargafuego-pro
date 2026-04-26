@@ -1,5 +1,3 @@
-# cargafuego-pro
-App de cálculo de carga de combustible NCh1916
 <!DOCTYPE html>
 
 <html lang="es">
