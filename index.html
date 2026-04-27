@@ -1968,16 +1968,47 @@ async function _doExport(h){
 
     const target = el('inf-modal-content');
     if(!target) throw new Error('No hay informe abierto');
-    target.scrollTop = 0;
-    await new Promise(r => setTimeout(r, 400));
 
-    // Capturar con html2canvas
-    const canvas = await html2canvas(target, {
-      scale: 2, useCORS: true, allowTaint: true,
-      backgroundColor: '#f0ede6', logging: false, windowWidth: 390,
-    });
+    // ── CLAVE: clonar el contenido completo en un div sin scroll
+    // html2canvas solo captura lo visible; con el clon captura TODO el informe
+    const clone = document.createElement('div');
+    clone.style.cssText = [
+      'position:fixed',
+      'top:0', 'left:0',
+      'width:390px',           // ancho iPhone estándar
+      'height:auto',           // sin límite de altura — captura todo
+      'overflow:visible',      // sin scroll
+      'background:#f0ede6',
+      'z-index:-9999',         // detrás de todo, invisible para el usuario
+      'pointer-events:none',
+      'padding:0',
+      'margin:0',
+    ].join(';');
+    clone.innerHTML = target.innerHTML;
+    document.body.appendChild(clone);
 
-    // Crear PDF
+    // Esperar a que el DOM renderice el clon completo
+    await new Promise(r => setTimeout(r, 600));
+
+    let canvas;
+    try {
+      canvas = await html2canvas(clone, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#f0ede6',
+        logging: false,
+        width: 390,
+        windowWidth: 390,
+        scrollX: 0,
+        scrollY: 0,
+      });
+    } finally {
+      // Siempre eliminar el clon aunque falle la captura
+      if(clone.parentNode) document.body.removeChild(clone);
+    }
+
+    // Crear PDF A4 paginado automáticamente
     const { jsPDF } = window.jspdf;
     const pdfW = 210, pageH = 297;
     const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
@@ -1990,7 +2021,7 @@ async function _doExport(h){
       pc.width = canvas.width; pc.height = sliceH;
       pc.getContext('2d').drawImage(canvas, 0, -yPx);
       const sliceMM = (sliceH * pdfW) / canvas.width;
-      doc.addImage(pc.toDataURL('image/jpeg', 0.90), 'JPEG', 0, 0, pdfW, sliceMM);
+      doc.addImage(pc.toDataURL('image/jpeg', 0.88), 'JPEG', 0, 0, pdfW, sliceMM);
       yPx += pageImgPx; page++;
     }
 
